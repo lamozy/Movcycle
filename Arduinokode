@@ -1,0 +1,546 @@
+
+
+#include <LiquidCrystal.h>
+
+LiquidCrystal lcd(12, 11, 8, 7, 6, 5);
+
+// Hjulomkrets i meter
+float bicycleWheelCircumference = 2.1206;  
+
+const int pauseButton = 2;
+boolean lastPauseButton = LOW;
+boolean currentPauseButton = LOW;
+
+const int displayModeButton = 3;
+boolean lastDisplayModeButton = LOW;
+boolean currentDisplayModeButton = LOW;
+
+const int revolutionButton = 4;
+boolean lastRevolutionButton = LOW;
+boolean currentRevolutionButton = LOW;
+
+boolean startShown = HIGH;
+
+boolean paused = LOW;
+boolean pausedShown = LOW;
+unsigned long pausedStartTime = 0;
+
+boolean wheelTurningShown = LOW;
+unsigned long wheelTurningStartTime = 0;
+
+boolean cycleSafelyShown = LOW;
+unsigned long cycleSafelyStartTime = 0;
+
+unsigned long lastRevolutionStartTime = 0;
+unsigned long revolutionTime = 0;
+
+int currentDisplayMode = 0;
+int showLap = 0;
+int lapCurrentlyShown = 100;
+int currentLap = 0;
+
+float currentDistance;
+unsigned long currentDuration;
+int currentMaximumKPH;
+int currentAverageKPH;
+int currentKPH;
+
+float arrayDistance[100];
+unsigned long arrayDuration[100];
+int arrayMaximumKPH[100];
+int arrayAverageKPH[100];
+
+unsigned long revolutionCount = 0;
+unsigned long currentTime = 0;
+unsigned long lapStartTime = 0;
+
+float km = 0.00;
+float kph = 0.00;
+int intHours;
+int intMinutes;
+int intSeconds;
+
+unsigned long milliSecondsInSecond = 1000;
+unsigned long milliSecondsInMinute = 60000;
+unsigned long milliSecondsInHour = 3600000;
+
+void setup()
+{
+
+  // Definerer pins for knapper og Hall sensor
+  pinMode (revolutionButton, INPUT);
+  pinMode (pauseButton, INPUT);
+  pinMode (displayModeButton, INPUT);
+
+
+  // Setter max fart til 0 utgangspunkt.
+  arrayMaximumKPH[0] = 0;
+
+  // Starter LCD-skjerm & viser "TRYKK INN KNAPP FOR Å STARTE"
+  lcd.begin(16, 2);
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("TRYKK INN KNAPP");
+  lcd.setCursor(1, 1);
+  lcd.print("FOR Å STARTE");
+  
+}
+
+void loop() {
+
+  // Få tid siden systemet startet
+  currentTime = millis();
+
+  // Lese rotasjon fra Hall sensor
+  currentRevolutionButton = debounce(lastRevolutionButton, revolutionButton);
+  if (lastRevolutionButton == HIGH && currentRevolutionButton == LOW) {
+    
+    // Hvis startmelding ikke vises og systemet ikke er pauset:
+    if (!startShown && !paused) {
+
+      // Øker rotasjonsteller
+      revolutionCount++;
+
+      // Printer "+" for å vise at en omdreining er ført
+      lcd.setCursor(0, 0);
+      lcd.print("+");
+      wheelTurningShown = HIGH;
+      wheelTurningStartTime = currentTime;
+
+      // Beregner millis for rotasjonstid
+      if (lastRevolutionStartTime > 0) {
+
+        revolutionTime = currentTime - lastRevolutionStartTime;
+
+        //  Regner ut nåværende hastighet
+        kph = (3600000 / revolutionTime) * bicycleWheelCircumference / 1000;
+        currentKPH = kph;
+
+        // Lagrer maxspeed
+        if (currentMaximumKPH < currentKPH) {
+          currentMaximumKPH = currentKPH;
+        }
+      }
+      lastRevolutionStartTime = currentTime;
+    }
+  }
+  lastRevolutionButton = currentRevolutionButton;
+
+  // Pause/omstart knapp
+  currentPauseButton = debounce(lastPauseButton, pauseButton);
+  if (lastPauseButton == LOW && currentPauseButton == HIGH) {
+
+    // Hvis "TRYKK INN KNAPP FOR Å STARTE" er vist startes 1. runde
+    if (startShown) {
+
+      startShown = LOW;  
+
+      // Vis "SYKLE TRYGT!" beskjed
+      showCycleSafely();
+      cycleSafelyShown = HIGH;
+      cycleSafelyStartTime = currentTime;
+
+      currentLap = 1;
+      resetLapVariables();
+      currentDisplayMode = 1;
+
+    }
+    else {
+      
+      // Hvis pauset starter vi ny runde
+      if (paused) {
+
+        paused = LOW;
+
+        // Vis "SYKLE SIKKERT!" 
+        showCycleSafely();
+        cycleSafelyShown = HIGH;
+        cycleSafelyStartTime = currentTime;
+
+        // Øker runde-teller
+        currentLap++;
+
+        // Hvis vi starter runde 100 skriver vi over nr 99 array posisjon 
+        // (kan bare holde 99 runder/perioder totalt)
+        if (currentLap > 99) {
+          currentLap = 99;
+          // Later som runde 100 (out-of-bounds verdi) vises (selvom det egt er runde 99)
+          // tvinger display av ny data for runde 99
+          lapCurrentlyShown = 100;
+        }
+
+        resetLapVariables();
+        currentDisplayMode = 1;
+      }
+
+      // Hvis pause ikke er aktivert, lagrer vi rundedata og aktiverer pause
+      else {
+
+        paused = HIGH;
+
+        // Beregner varighet
+        currentDuration = currentTime - lapStartTime;
+
+        // Hvis runde-varighet er mindre enn 2 sekunder (betyr at bruker trykket pauseknapp mens "SYKLE SIKKERT!" 
+        // beskjed ble vist) lagres ikke runden
+        if (currentDuration < 2000) {
+          currentLap--;
+        }
+        // Hvis ikke lagres runden
+        else {
+
+          // Beregner distanse og gjennomsnittsfart i KM/H hvis sykkel i bevegelse
+          if (revolutionCount > 0) {
+            currentDistance = revolutionCount * bicycleWheelCircumference / 1000;
+            currentAverageKPH = currentDistance * 3600000 / currentDuration;
+          }
+          
+          // Lagre data for runde inn i array
+          arrayDistance[currentLap] = currentDistance;
+          arrayDuration[currentLap] = currentDuration;
+          arrayAverageKPH[currentLap] = currentAverageKPH;
+          arrayMaximumKPH[currentLap] = currentMaximumKPH;
+  
+          // Oppdaterer totalverider for alle runder
+          arrayDistance[0] = arrayDistance[0] + currentDistance;
+          arrayDuration[0] = arrayDuration[0] + currentDuration;
+          arrayAverageKPH[0] = arrayDistance[0] * 3600000 / arrayDuration[0];  
+          if (currentMaximumKPH > arrayMaximumKPH[0]) {
+            arrayMaximumKPH[0] = currentMaximumKPH;
+          }        
+        }
+
+        // Hvis "SYKLE SIKKERT!" har vært vist, skru av og vis "PAUSE!" beskjed
+        // skrus ikke av når "SYKLE SIKKERT!" utløper
+        cycleSafelyShown = LOW;
+        
+        // Vis "PAUSE!" 
+        showPaused();
+        pausedShown = HIGH;
+        pausedStartTime = currentTime;
+
+        // Viser data for runde
+        showLap = currentLap;
+        currentDisplayMode = 3;
+
+        // Setter out-of-bounds verdi til lapCurrentlyShown for å tvinge data til å vises
+        lapCurrentlyShown = 100;
+      }
+    }
+  }
+  lastPauseButton = currentPauseButton;
+
+  // Leser DISPLAY MODE knapp
+  currentDisplayModeButton = debounce(lastDisplayModeButton, displayModeButton);
+  if (lastDisplayModeButton == LOW && currentDisplayModeButton == HIGH) {
+
+    // Hvis "TRYKK KNAPP FOR Å STARTE" har vært vist, starter vi 1. runde
+    if (startShown) {
+
+      startShown = LOW;  
+
+      // VIS "SYKLE SIKKERT!" melding
+      showCycleSafely();
+      cycleSafelyShown = HIGH;
+      cycleSafelyStartTime = currentTime;
+
+      currentLap = 1;
+      resetLapVariables();
+      currentDisplayMode = 1;
+
+    }
+    else {
+      
+      // Hvis verken "SYKLE SIKKERT!" eller "PAUSE!" vises
+      if (!cycleSafelyShown && !pausedShown) {
+
+        // Hvis ikke i pausemodus(en runde er pågående)
+        if (!paused) {
+
+          // Bytt mellom de to display modusene
+          if (currentDisplayMode == 1) {
+            currentDisplayMode = 2;
+          }
+          else {
+            currentDisplayMode = 1;
+          }
+          
+          // Tøm display og vis riktig modus
+          showLabels(currentDisplayMode);
+        }
+        
+        // Hvis ikke er enheten i pausemodus, og vi viser runde-data
+        else {
+          currentDisplayMode = 3;
+          showLap++;
+          if (showLap > currentLap) {
+            showLap = 0; // Viser total
+          }
+        }
+      }
+    }
+  }
+  lastDisplayModeButton = currentDisplayModeButton;
+
+  // Hvis hjulrotasjon indikator vises, ta av om tid er 250 millis eller mer
+  if (wheelTurningShown && !startShown && !paused && (currentTime >= (wheelTurningStartTime + 250))) {
+    wheelTurningShown = LOW;
+    lcd.setCursor(0, 0);
+    lcd.print(" ");
+  }
+
+  // Hvis hjulrotasjon indikator vises, ta av om tid er 250 millis eller mer
+  if (!startShown && !paused && (currentTime >= (lastRevolutionStartTime + 10000)) && currentKPH > 0) {
+    currentKPH = 0;
+  }
+
+  // Hvis "SYKLE SIKKERT!" er vist, ta av etter 2 sekunder eller mer
+  if (cycleSafelyShown && (currentTime >= (cycleSafelyStartTime + 2000))) {
+    cycleSafelyShown = LOW;
+    showLabels(currentDisplayMode);
+  }
+
+  // Hvis "Pause!" er vist, ta av om det har gått 2 sekunder eller mer
+  if (pausedShown && (currentTime >= (pausedStartTime + 2000))) {
+    pausedShown = LOW;
+    showLabels(currentDisplayMode);
+  }
+
+  // Hvis "TRYKK KNAPP FOR Å STARTE" ikke vises og ikke vi ikke er i pause
+  if (!startShown && !paused) {
+
+    // Beregne millisekund siden rundestart
+    currentDuration = currentTime - lapStartTime;
+
+    // Bergene distanse og gjennomsnittsfart hvis sykkel har vært i bevegelse
+    if (revolutionCount > 0) {
+      // Beregner kilometer tilbakelagt
+      // (Omkrets i meter)
+      currentDistance = revolutionCount * bicycleWheelCircumference / 1000;
+
+      // Beregner gjennomsnittsfart i KM/H siden rundestart
+      currentAverageKPH = currentDistance * 3600000 / currentDuration;
+    }
+  }
+
+  // Hvis ingen beskjeder vises, oppdater data på display
+  if (!startShown && !cycleSafelyShown && !pausedShown) {
+
+    if (currentDisplayMode < 3) {
+
+      lcd.setCursor(1, 0);
+      lcd.print(currentDistance);
+      lcd.print(" km");
+
+      lcd.setCursor(14, 0);
+      if (currentKPH < 10) {
+        lcd.print(" ");
+      }
+      lcd.print(currentKPH);
+
+      computeHMS(currentDuration);
+      lcd.setCursor(1, 1);
+      if (intHours < 10) {
+        lcd.print("0");
+      }
+      lcd.print(intHours);
+      
+      lcd.print(":");
+      if (intMinutes < 10) {
+        lcd.print("0");
+      }
+      lcd.print(intMinutes);
+      
+      lcd.print(":");
+      if (intSeconds < 10) {
+        lcd.print("0");
+      }
+      lcd.print(intSeconds);
+
+      lcd.setCursor(12, 1);
+      lcd.print("G");
+
+      if (currentDisplayMode == 1) {
+        lcd.setCursor(12, 1);
+        lcd.print("G");
+        lcd.setCursor(14, 1);
+        if (currentAverageKPH < 10) {
+          lcd.print(" ");
+        }
+        lcd.print(currentAverageKPH);
+      }
+      else {
+        lcd.setCursor(12, 1);
+        lcd.print("M");
+        lcd.setCursor(14, 1);
+        if (currentMaximumKPH < 10) {
+          lcd.print(" ");
+        }
+        lcd.print(currentMaximumKPH);
+      }
+    }
+
+    // Hvis ikke er enhet i pause, viser lagret data
+    else {
+
+      // Oppdaterer display bare hvis vi må vise annen runde enn den som vises
+      // slipper å oppdatere display hvis samme data skal vises for å slippe flicker
+      if (lapCurrentlyShown != showLap) {
+
+        lapCurrentlyShown = showLap;
+        
+        lcd.clear();
+
+        lcd.setCursor(0, 0);
+        if (showLap == 0) {
+          lcd.print("R ");
+        } 
+        else {
+          lcd.print(showLap);
+        }
+
+        lcd.setCursor(2, 0);
+        lcd.print("Snitt");
+        lcd.setCursor(7, 0);
+        lcd.print(arrayAverageKPH[showLap]);
+        if (arrayAverageKPH[showLap] < 10) {
+          lcd.print(" ");
+        }
+
+        lcd.setCursor(10, 0);
+        lcd.print("Max");
+        lcd.setCursor(14, 0);
+        lcd.print(arrayMaximumKPH[showLap]);
+        if (arrayMaximumKPH[showLap] < 10) {
+          lcd.print(" ");
+        }
+        
+        lcd.setCursor(0, 1);
+        lcd.print("        ");
+        lcd.setCursor(0, 1);
+        lcd.print(arrayDistance[showLap]);
+
+        computeHMS(arrayDuration[showLap]);
+        lcd.setCursor(8, 1);
+        if (intHours < 10) {
+          lcd.print("0");
+        }
+        lcd.print(intHours);
+        
+        lcd.print(":");
+        
+        if (intMinutes < 10) {
+          lcd.print("0");
+        }
+        lcd.print(intMinutes);
+        
+        lcd.print(":");
+        
+        if (intSeconds < 10) {
+          lcd.print("0");
+        }
+        lcd.print(intSeconds);
+      }        
+    }
+  }
+
+   // while (currentAverageKPH == 0 and currentMaximumKPH >= 45) {
+   //     showComment();
+   //     delay(1000);
+   //     }
+}
+
+// Beregner timer, minutt og sekund for gitt varighet (i millisekund)
+void computeHMS(unsigned long duration) {
+
+  float floatHours;
+  float floatMinutes;
+  float floatSeconds;
+
+  intHours = 0;
+  intMinutes = 0;
+  intSeconds = 0;
+
+  if (duration >= 1000) {
+      floatSeconds = duration / milliSecondsInSecond % 60;
+      intSeconds = floatSeconds;
+      
+      floatMinutes = duration / milliSecondsInMinute % 60;
+      intMinutes = floatMinutes;
+      
+      floatHours = duration / milliSecondsInHour % 24;
+      intHours = floatHours;
+  }
+}
+
+// Reset alle variabler brukt for å beregne nåværende runde
+void resetLapVariables() {
+  revolutionCount = 0;
+
+  lapStartTime = currentTime;
+
+  currentDistance = 0;
+  currentDuration = 0;
+  currentMaximumKPH = 0;
+  currentAverageKPH = 0;
+}
+
+// Vis "SYKLE TRYGT!"
+void showCycleSafely() {
+  lcd.clear();
+  lcd.setCursor(5, 0);
+  lcd.print("SYKLE");
+  lcd.setCursor(5, 1);
+  lcd.print("TRYGT!");
+}
+
+// Vis "PAUSE!"
+void showPaused() {
+  lcd.clear();
+  lcd.setCursor(5, 0);
+  lcd.print("PAUSE!");
+}
+
+// Show appropriate labels for current mode
+void showLabels(int currentDisplayMode) {
+
+  lcd.clear();
+  switch (currentDisplayMode)     {
+  case 1:
+    lcd.setCursor(12, 0);
+    lcd.print("F");
+    lcd.setCursor(12, 1);
+    lcd.print("G");
+    break;
+  case 2:
+    lcd.setCursor(12, 0);
+    lcd.print("F");
+    lcd.setCursor(12, 1);
+    lcd.print("M");
+    break;
+  }
+}
+
+ //Vise tilbakemelding
+//void showComment() {
+  //    lcd.clear();
+  //    lcd.setCursor(0, 0);
+  //    lcd.print("Du syklet like raskt som");
+  //    lcd.setCursor(0, 1);
+  //    lcd.print("Usain Bolt løp på 100-meteren");
+  // }
+
+ 
+  
+
+
+//En debouncing funksjon som funker for alle knapper
+boolean debounce(boolean last, int pin)
+{
+  boolean current = digitalRead(pin);
+  if (last != current) {
+    delay(5);
+    current = digitalRead(pin);
+  }
+  return current;
+}
